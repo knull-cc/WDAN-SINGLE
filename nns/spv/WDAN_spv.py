@@ -36,8 +36,7 @@ class WDANSupervisor(BaseMTSSupervisor):
     def __init__(self, **kwargs):
         super(WDANSupervisor, self).__init__(**kwargs)
         self.use_amp = self._train_kwargs.get('precision', 'full') == 'amp'
-        self.pred_loss_weight = self._train_kwargs.get('pred_loss_weight', 1.0)
-        self.stats_loss_weight = self._train_kwargs.get('stats_loss_weight', 0.0)
+        # 独立优化：不再使用加权比例，两个分支各自用各自的损失训练
         self.joint_training_only = bool(self._train_kwargs.get('joint_training_only', False))
 
         self.stats_scaler = GradScaler() if self.use_amp else None
@@ -111,9 +110,18 @@ class WDANSupervisor(BaseMTSSupervisor):
             "pred_loss": pred_loss,
         }
 
-    def model_forward(self, x, y, x_mark, y_mark, pred_only=True):
-        x, statistics_pred = self.statistics_pred.normalize(x)
-        y_pred = self.model(x, x_mark, y, y_mark)
+    def model_forward(self, x, y, x_mark, y_mark, pred_only=True, *, detach_stats=False):
+        """前向：先经统计模块归一化，再经主干预测，再用统计量反归一化。
+
+        参数
+        - detach_stats: True 时，从统计模块切断梯度（用于仅更新主干时）。
+        """
+        x_norm, statistics_pred = self.statistics_pred.normalize(x)
+        # 若只更新主干，则切断到统计模块的梯度
+        if detach_stats:
+            x_norm = x_norm.detach()
+            statistics_pred = statistics_pred.detach()
+        y_pred = self.model(x_norm, x_mark, y, y_mark)
         y_pred = self.statistics_pred.de_normalize(y_pred, statistics_pred)
         if pred_only:
             return y_pred
@@ -123,9 +131,8 @@ class WDANSupervisor(BaseMTSSupervisor):
     def train(self, trial=None):
         self._reset_stats_optimizer_and_scheduler()
         if self.joint_training_only:
-            self.logger.info("*********Single Stage Joint Training*********")
-            lr = self.optimizer.param_groups[0]['lr']
-            self.optimizer.add_param_group({'params': self.statistics_pred.parameters(), 'lr': lr})
+            # 单阶段“各自更新各自”：两个优化器，分别按各自损失更新
+            self.logger.info("*********Single Stage Separate Updates*********")
             return self._train(trial)
 
         stats_strategy = self._train_kwargs.get('stats_strategy', 'stats_bb')
@@ -134,9 +141,7 @@ class WDANSupervisor(BaseMTSSupervisor):
             self._train_stats()
 
         self.logger.info(f"*********Start Step 2 Training*********")
-        if stats_strategy in ['stats_union', 'union']:
-            lr = self.optimizer.param_groups[0]['lr']
-            self.optimizer.add_param_group({'params': self.statistics_pred.parameters(), 'lr': lr})
+        # 第二阶段采用单阶段“各自更新各自”的方式（不合并到同一优化器）
         return self._train(trial)
 
     def _train_stats(self):
@@ -300,152 +305,100 @@ class WDANSupervisor(BaseMTSSupervisor):
         return val_loss
 
     def train_epoch(self, epoch):
-        stats_strategy = self._train_kwargs.get('stats_strategy', 'stats_bb')
-        pred_loss_weight = self.pred_loss_weight
-        stats_loss_weight = self.stats_loss_weight
-        force_joint = self.joint_training_only
-        joint_phase = False
-        if force_joint:
-            self.model.train()
-            self.statistics_pred.train()
-            current_scaler = self.joint_scaler
-            joint_phase = True
-        elif stats_strategy == 'stats_bb':
-            self.model.train()
-            self.statistics_pred.eval()
-            current_scaler = self.backbone_scaler
-        elif stats_strategy in ['stats_union', 'union']:
-            self.model.train()
-            self.statistics_pred.train()
-            current_scaler = self.joint_scaler
-            joint_phase = True
-        elif stats_strategy == 'stats_bb_union':
-            twice_epoch = self._train_kwargs.get('twice_epoch', 1)
-            if twice_epoch == epoch - 1:
-                self.logger.info(f"*********Start Step 3 Training*********")
-                lr = self.optimizer.param_groups[0]['lr']
-                self.optimizer.add_param_group({'params': self.statistics_pred.parameters(), 'lr': lr})
-            self.model.train()
-            self.statistics_pred.train()
-            joint_phase = twice_epoch <= epoch - 1
-            current_scaler = self.backbone_scaler if not joint_phase else self.joint_scaler
-        else:
-            raise NotImplementedError
+        # 单阶段（或第二阶段）下，默认两个分支都训练；各自用各自的损失与优化器独立更新
+        self.model.train()
+        self.statistics_pred.train()
 
-        enable_stats_loss = joint_phase and stats_loss_weight > 0
+        total_pred_loss = 0.0
+        total_stats_loss = 0.0
 
-        total_loss = 0
-        total_pred_loss = 0
-        total_stats_loss = 0
         for batch_idx, (x, y, x_mark, y_mark) in enumerate(self.train_loader):
             self.train_iter += 1
-
             x, y, x_mark, y_mark = self.prepare_data(x, y, x_mark, y_mark)
-            # clear grads once; we will accumulate two separate backwards
-            self.optimizer.zero_grad()
 
             if self._train_kwargs.get('debug', False):
                 torch.autograd.set_detect_anomaly(True)
 
-            # ----------------------
-            # Forward/Backward pass 1: prediction loss
-            # ----------------------
+            # 1) 预测分支：仅更新主干
+            self.optimizer.zero_grad()
             if self.use_amp:
                 with autocast():
-                    y_pred_only = self.model_forward(x, y, x_mark, y_mark, pred_only=True)
+                    y_pred_only = self.model_forward(x, y, x_mark, y_mark, pred_only=True, detach_stats=True)
                     f_dim = -1 if self._data_kwargs['features'] == 'MS' else 0
                     seq_y = y[:, -self.pred_len:, f_dim:]
                     y_pred_cut = y_pred_only[:, -self.pred_len:, f_dim:]
                     pred_loss, _ = self.loss(y_pred_cut, seq_y)
-                    pred_loss_scaled = pred_loss_weight * pred_loss
-                # backward for pred loss (accumulate)
                 if self._train_kwargs.get('debug', False):
                     with torch.autograd.detect_anomaly():
-                        current_scaler.scale(pred_loss_scaled).backward()
+                        self.backbone_scaler.scale(pred_loss).backward()
                 else:
-                    current_scaler.scale(pred_loss_scaled).backward()
+                    self.backbone_scaler.scale(pred_loss).backward()
+                if self._train_kwargs.get('clip_grad', False):
+                    self.backbone_scaler.unscale_(self.optimizer)
+                    torch.nn.utils.clip_grad_norm_(self.model.parameters(), self._train_kwargs['max_grad_norm'])
+                self.backbone_scaler.step(self.optimizer)
+                self.backbone_scaler.update()
             else:
-                y_pred_only = self.model_forward(x, y, x_mark, y_mark, pred_only=True)
+                y_pred_only = self.model_forward(x, y, x_mark, y_mark, pred_only=True, detach_stats=True)
                 f_dim = -1 if self._data_kwargs['features'] == 'MS' else 0
                 seq_y = y[:, -self.pred_len:, f_dim:]
                 y_pred_cut = y_pred_only[:, -self.pred_len:, f_dim:]
                 pred_loss, _ = self.loss(y_pred_cut, seq_y)
-                pred_loss_scaled = pred_loss_weight * pred_loss
                 if self._train_kwargs.get('debug', False):
                     with torch.autograd.detect_anomaly():
-                        pred_loss_scaled.backward()
+                        pred_loss.backward()
                 else:
-                    pred_loss_scaled.backward()
-
-            # ----------------------
-            # Forward/Backward pass 2: statistics loss (optional)
-            # ----------------------
-            stats_loss = None
-            if enable_stats_loss:
-                if self.use_amp:
-                    with autocast():
-                        # run stats forward independently
-                        _x_norm, stats_pred = self.statistics_pred.normalize(x)
-                        stats_loss_raw, _ = self.stats_loss(stats_pred, y[:, -self.pred_len:, :])
-                        stats_loss_scaled = stats_loss_weight * stats_loss_raw
-                    if self._train_kwargs.get('debug', False):
-                        with torch.autograd.detect_anomaly():
-                            current_scaler.scale(stats_loss_scaled).backward()
-                    else:
-                        current_scaler.scale(stats_loss_scaled).backward()
-                    stats_loss = stats_loss_raw
-                else:
-                    _x_norm, stats_pred = self.statistics_pred.normalize(x)
-                    stats_loss_raw, _ = self.stats_loss(stats_pred, y[:, -self.pred_len:, :])
-                    stats_loss_scaled = stats_loss_weight * stats_loss_raw
-                    if self._train_kwargs.get('debug', False):
-                        with torch.autograd.detect_anomaly():
-                            stats_loss_scaled.backward()
-                    else:
-                        stats_loss_scaled.backward()
-                    stats_loss = stats_loss_raw
-
-            # add max grad clipping
-            if self._train_kwargs.get('clip_grad', False):
-                if self.use_amp:
-                    # unscale after all backward calls before clipping
-                    current_scaler.unscale_(self.optimizer)
-                torch.nn.utils.clip_grad_norm_(self.model.parameters(), self._train_kwargs['max_grad_norm'])
-
-            if self.use_amp:
-                current_scaler.step(self.optimizer)
-                current_scaler.update()
-            else:
+                    pred_loss.backward()
+                if self._train_kwargs.get('clip_grad', False):
+                    torch.nn.utils.clip_grad_norm_(self.model.parameters(), self._train_kwargs['max_grad_norm'])
                 self.optimizer.step()
 
-            # Accumulate running averages for separate losses
-            if enable_stats_loss and stats_loss is not None:
-                total_stats_loss += stats_loss.item()
-            total_pred_loss += pred_loss.item()
-            # keep a composed loss only for potential internal monitoring (not used for logs)
-            if enable_stats_loss and stats_loss is not None:
-                total_loss += (pred_loss_weight * pred_loss.item() + stats_loss_weight * stats_loss.item())
-            else:
-                total_loss += pred_loss.item()
-
-            # log information
-            if batch_idx % self._train_kwargs['log_step'] == 0:
-                if enable_stats_loss and stats_loss is not None:
-                    self.logger.info(
-                        f'Train Epoch {epoch}: {batch_idx}/{self.train_per_epoch} GradAcc -> '
-                        f'L1={pred_loss.item():.3f}, L2={stats_loss.item():.3f}; step=1')
+            # 2) 统计分支：仅更新统计模块
+            self.stats_optimizer.zero_grad()
+            if self.use_amp:
+                with autocast():
+                    _x_norm, stats_pred = self.statistics_pred.normalize(x)
+                    stats_loss, _ = self.stats_loss(stats_pred, y[:, -self.pred_len:, :])
+                if self._train_kwargs.get('debug', False):
+                    with torch.autograd.detect_anomaly():
+                        self.stats_scaler.scale(stats_loss).backward()
                 else:
-                    self.logger.info(
-                        f'Train Epoch {epoch}: {batch_idx}/{self.train_per_epoch} L1={pred_loss.item():.3f}; step=1')
+                    self.stats_scaler.scale(stats_loss).backward()
+                # 统计分支可选裁剪
+                if self._train_kwargs.get('clip_grad', False):
+                    self.stats_scaler.unscale_(self.stats_optimizer)
+                    torch.nn.utils.clip_grad_norm_(self.statistics_pred.parameters(), self._train_kwargs['max_grad_norm'])
+                self.stats_scaler.step(self.stats_optimizer)
+                self.stats_scaler.update()
+            else:
+                _x_norm, stats_pred = self.statistics_pred.normalize(x)
+                stats_loss, _ = self.stats_loss(stats_pred, y[:, -self.pred_len:, :])
+                if self._train_kwargs.get('debug', False):
+                    with torch.autograd.detect_anomaly():
+                        stats_loss.backward()
+                else:
+                    stats_loss.backward()
+                if self._train_kwargs.get('clip_grad', False):
+                    torch.nn.utils.clip_grad_norm_(self.statistics_pred.parameters(), self._train_kwargs['max_grad_norm'])
+                self.stats_optimizer.step()
 
-        # Epoch summaries: report separate averages; use L1 average as train_epoch_loss
+            # 记录
+            total_pred_loss += pred_loss.item()
+            total_stats_loss += stats_loss.item()
+
+            if batch_idx % self._train_kwargs['log_step'] == 0:
+                self.logger.info(
+                    f'Train Epoch {epoch}: {batch_idx}/{self.train_per_epoch} -> '
+                    f'L1={pred_loss.item():.3f}, L2={stats_loss.item():.3f}')
+
+        # 结束一个 epoch 后，同步更新统计分支的 lr（主干由基类负责）
+        if self.stats_lr_scheduler is not None:
+            self.stats_lr_scheduler.step()
+
         avg_pred_loss = total_pred_loss / self.train_per_epoch
-        if enable_stats_loss:
-            avg_stats_loss = total_stats_loss / self.train_per_epoch
-            self.logger.info(
-                f'>>>>>>>>Train Epoch {epoch}: L1_avg {avg_pred_loss:.3f}, L2_avg {avg_stats_loss:.3f}; step=1')
-        else:
-            self.logger.info(f'>>>>>>>>Train Epoch {epoch}: L1_avg {avg_pred_loss:.3f}; step=1')
+        avg_stats_loss = total_stats_loss / self.train_per_epoch
+        self.logger.info(
+            f'>>>>>>>>Train Epoch {epoch}: L1_avg {avg_pred_loss:.3f}, L2_avg {avg_stats_loss:.3f}')
         return avg_pred_loss
 
     def val_epoch(self, epoch):

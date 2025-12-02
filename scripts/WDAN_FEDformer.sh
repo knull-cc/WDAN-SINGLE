@@ -34,7 +34,7 @@ python run.py \
   --stats_ffn_layers 0 \
   --twice_epoch 1 \
   --base_stats_lr 0.0001 \
-  --stats_strategy stats_bb_union \
+  --stats_strategy union \
   --loss_type mse \
   --gpu_id $gpu_id \
   --base_lr 0.0001
@@ -65,7 +65,7 @@ python run.py \
   --stats_ffn_layers 1 \
   --twice_epoch 0 \
   --base_stats_lr 0.0001 \
-  --stats_strategy stats_bb_union \
+  --stats_strategy union \
   --loss_type mse \
   --gpu_id $gpu_id \
   --base_lr 0.0001
@@ -96,7 +96,7 @@ python run.py \
   --stats_ffn_layers 2 \
   --twice_epoch 0 \
   --base_stats_lr 0.0001 \
-  --stats_strategy stats_bb_union \
+  --stats_strategy union \
   --loss_type mse \
   --gpu_id $gpu_id \
   --base_lr 0.0001
@@ -127,7 +127,7 @@ python run.py \
   --stats_ffn_layers 1 \
   --twice_epoch 1 \
   --base_stats_lr 0.0001 \
-  --stats_strategy stats_bb_union \
+  --stats_strategy union \
   --loss_type mse \
   --gpu_id $gpu_id \
   --base_lr 0.0001
@@ -160,7 +160,7 @@ python run.py \
   --stats_ffn_layers 0 \
   --twice_epoch 2 \
   --base_stats_lr 0.001 \
-  --stats_strategy stats_bb_union \
+  --stats_strategy union \
   --loss_type mse \
   --gpu_id $gpu_id \
   --base_lr 0.0001
@@ -191,7 +191,7 @@ python run.py \
   --stats_ffn_layers 0 \
   --twice_epoch 0 \
   --base_stats_lr 0.0001 \
-  --stats_strategy stats_bb_union \
+  --stats_strategy union \
   --loss_type mse \
   --gpu_id $gpu_id \
   --base_lr 0.0001
@@ -222,7 +222,7 @@ python run.py \
   --stats_ffn_layers 0 \
   --twice_epoch 2 \
   --base_stats_lr 0.001 \
-  --stats_strategy stats_bb_union \
+  --stats_strategy union \
   --loss_type mse \
   --gpu_id $gpu_id \
   --base_lr 0.0001
@@ -253,7 +253,7 @@ python run.py \
   --stats_ffn_layers 0 \
   --twice_epoch 1 \
   --base_stats_lr 0.001 \
-  --stats_strategy stats_bb_union \
+  --stats_strategy union \
   --loss_type mse \
   --gpu_id $gpu_id \
   --base_lr 0.0001
@@ -286,7 +286,7 @@ python run.py \
   --stats_ffn_layers 0 \
   --twice_epoch 1 \
   --base_stats_lr 0.001 \
-  --stats_strategy stats_bb_union \
+  --stats_strategy union \
   --loss_type mse \
   --gpu_id $gpu_id \
   --base_lr 0.0001
@@ -317,7 +317,7 @@ python run.py \
   --stats_ffn_layers 1 \
   --twice_epoch 0 \
   --base_stats_lr 0.0001 \
-  --stats_strategy stats_bb_union \
+  --stats_strategy union \
   --loss_type mse \
   --gpu_id $gpu_id \
   --base_lr 0.0001
@@ -348,7 +348,7 @@ python run.py \
   --stats_ffn_layers 2 \
   --twice_epoch 1 \
   --base_stats_lr 0.001 \
-  --stats_strategy stats_bb_union \
+  --stats_strategy union \
   --loss_type mse \
   --gpu_id $gpu_id \
   --base_lr 0.0001
@@ -379,7 +379,7 @@ python run.py \
   --stats_ffn_layers 2 \
   --twice_epoch 1 \
   --base_stats_lr 0.001 \
-  --stats_strategy stats_bb_union \
+  --stats_strategy union \
   --loss_type mse \
   --gpu_id $gpu_id \
   --base_lr 0.0001
@@ -412,7 +412,7 @@ python run.py \
   --stats_ffn_layers 2 \
   --twice_epoch 2 \
   --base_stats_lr 0.001 \
-  --stats_strategy stats_bb_union \
+  --stats_strategy union \
   --loss_type mse \
   --gpu_id $gpu_id \
   --base_lr 0.0001
@@ -443,7 +443,7 @@ python run.py \
   --stats_ffn_layers 1 \
   --twice_epoch 0 \
   --base_stats_lr 0.0001 \
-  --stats_strategy stats_bb_union \
+  --stats_strategy union \
   --loss_type mse \
   --gpu_id $gpu_id \
   --base_lr 0.0001
@@ -474,7 +474,7 @@ python run.py \
   --stats_ffn_layers 2 \
   --twice_epoch 1 \
   --base_stats_lr 0.001 \
-  --stats_strategy stats_bb_union \
+  --stats_strategy union \
   --loss_type mse \
   --gpu_id $gpu_id \
   --base_lr 0.0001
@@ -505,7 +505,7 @@ python run.py \
   --stats_ffn_layers 0 \
   --twice_epoch 1 \
   --base_stats_lr 0.0001 \
-  --stats_strategy stats_bb_union \
+  --stats_strategy union \
   --loss_type mse \
   --gpu_id $gpu_id \
   --base_lr 0.0001
@@ -538,7 +538,7 @@ python run.py \
   --stats_ffn_layers 0 \
   --twice_epoch 2 \
   --base_stats_lr 0.001 \
-  --stats_strategy stats_bb_union \
+  --stats_strategy union \
   --loss_type mse \
   --gpu_id $gpu_id \
   --base_lr 0.0001
@@ -569,7 +569,7 @@ python run.py \
   --stats_ffn_layers 1 \
   --twice_epoch 0 \
   --base_stats_lr 0.001 \
-  --stats_strategy stats_bb_union \
+  --stats_strategy union \
   --loss_type mse \
   --gpu_id $gpu_id \
   --base_lr 0.0001
@@ -600,7 +600,7 @@ python run.py \
   --stats_ffn_layers 1 \
   --twice_epoch 2 \
   --base_stats_lr 0.001 \
-  --stats_strategy stats_bb_union \
+  --stats_strategy union \
   --loss_type mse \
   --gpu_id $gpu_id \
   --base_lr 0.0001
@@ -631,7 +631,7 @@ python run.py \
   --stats_ffn_layers 0 \
   --twice_epoch 2 \
   --base_stats_lr 0.001 \
-  --stats_strategy stats_bb_union \
+  --stats_strategy union \
   --loss_type mse \
   --gpu_id $gpu_id \
   --base_lr 0.0001
@@ -664,7 +664,7 @@ python run.py \
   --stats_ffn_layers 2 \
   --twice_epoch 2 \
   --base_stats_lr 0.001 \
-  --stats_strategy stats_bb_union \
+  --stats_strategy union \
   --loss_type mse \
   --gpu_id $gpu_id \
   --base_lr 0.0001
@@ -695,7 +695,7 @@ python run.py \
   --stats_ffn_layers 1 \
   --twice_epoch 2 \
   --base_stats_lr 0.001 \
-  --stats_strategy stats_bb_union \
+  --stats_strategy union \
   --loss_type mse \
   --gpu_id $gpu_id \
   --base_lr 0.0001
@@ -726,7 +726,7 @@ python run.py \
   --stats_ffn_layers 1 \
   --twice_epoch 0 \
   --base_stats_lr 0.001 \
-  --stats_strategy stats_bb_union \
+  --stats_strategy union \
   --loss_type mse \
   --gpu_id $gpu_id \
   --base_lr 0.0001
@@ -757,7 +757,7 @@ python run.py \
   --stats_ffn_layers 1 \
   --twice_epoch 0 \
   --base_stats_lr 0.001 \
-  --stats_strategy stats_bb_union \
+  --stats_strategy union \
   --loss_type mse \
   --gpu_id $gpu_id \
   --base_lr 0.0001
@@ -789,7 +789,7 @@ python run.py \
   --stats_d_ff 512 \
   --stats_ffn_layers 1 \
   --twice_epoch 1 \
-  --stats_strategy stats_bb_union \
+  --stats_strategy union \
   --base_stats_lr 0.001 \
   --loss_type mse \
   --gpu_id $gpu_id \
@@ -820,7 +820,7 @@ python run.py \
   --stats_d_ff 512 \
   --stats_ffn_layers 2 \
   --twice_epoch 1 \
-  --stats_strategy stats_bb_union \
+  --stats_strategy union \
   --base_stats_lr 0.001 \
   --loss_type mse \
   --gpu_id $gpu_id \
@@ -851,7 +851,7 @@ python run.py \
   --stats_d_ff 512 \
   --stats_ffn_layers 1 \
   --twice_epoch 1 \
-  --stats_strategy stats_bb_union \
+  --stats_strategy union \
   --base_stats_lr 0.001 \
   --loss_type mse \
   --gpu_id $gpu_id \
@@ -882,7 +882,7 @@ python run.py \
   --stats_d_ff 512 \
   --stats_ffn_layers 1 \
   --twice_epoch 1 \
-  --stats_strategy stats_bb_union \
+  --stats_strategy union \
   --base_stats_lr 0.001 \
   --loss_type mse \
   --gpu_id $gpu_id \
