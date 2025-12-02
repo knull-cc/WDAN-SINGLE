@@ -341,62 +341,74 @@ class WDANSupervisor(BaseMTSSupervisor):
             self.train_iter += 1
 
             x, y, x_mark, y_mark = self.prepare_data(x, y, x_mark, y_mark)
+            # clear grads once; we will accumulate two separate backwards
             self.optimizer.zero_grad()
 
             if self._train_kwargs.get('debug', False):
                 torch.autograd.set_detect_anomaly(True)
 
+            # ----------------------
+            # Forward/Backward pass 1: prediction loss
+            # ----------------------
             if self.use_amp:
                 with autocast():
-                    model_out = self.model_forward(x, y, x_mark, y_mark, pred_only=not enable_stats_loss)
-                    if enable_stats_loss:
-                        y_pred, stats_pred = model_out
-                    else:
-                        y_pred = model_out
-                        stats_pred = None
+                    y_pred_only = self.model_forward(x, y, x_mark, y_mark, pred_only=True)
                     f_dim = -1 if self._data_kwargs['features'] == 'MS' else 0
                     seq_y = y[:, -self.pred_len:, f_dim:]
-                    y_pred = y_pred[:, -self.pred_len:, f_dim:]
-                    pred_loss, _ = self.loss(y_pred, seq_y)
-                    if enable_stats_loss:
-                        stats_loss, _ = self.stats_loss(stats_pred, y[:, -self.pred_len:, :])
-                        loss = pred_loss_weight * pred_loss + stats_loss_weight * stats_loss
-                    else:
-                        stats_loss = None
-                        loss = pred_loss
-            else:
-                model_out = self.model_forward(x, y, x_mark, y_mark, pred_only=not enable_stats_loss)
-                if enable_stats_loss:
-                    y_pred, stats_pred = model_out
+                    y_pred_cut = y_pred_only[:, -self.pred_len:, f_dim:]
+                    pred_loss, _ = self.loss(y_pred_cut, seq_y)
+                    pred_loss_scaled = pred_loss_weight * pred_loss
+                # backward for pred loss (accumulate)
+                if self._train_kwargs.get('debug', False):
+                    with torch.autograd.detect_anomaly():
+                        current_scaler.scale(pred_loss_scaled).backward()
                 else:
-                    y_pred = model_out
-                    stats_pred = None
+                    current_scaler.scale(pred_loss_scaled).backward()
+            else:
+                y_pred_only = self.model_forward(x, y, x_mark, y_mark, pred_only=True)
                 f_dim = -1 if self._data_kwargs['features'] == 'MS' else 0
                 seq_y = y[:, -self.pred_len:, f_dim:]
-                y_pred = y_pred[:, -self.pred_len:, f_dim:]
-                pred_loss, _ = self.loss(y_pred, seq_y)
-                if enable_stats_loss:
-                    stats_loss, _ = self.stats_loss(stats_pred, y[:, -self.pred_len:, :])
-                    loss = pred_loss_weight * pred_loss + stats_loss_weight * stats_loss
+                y_pred_cut = y_pred_only[:, -self.pred_len:, f_dim:]
+                pred_loss, _ = self.loss(y_pred_cut, seq_y)
+                pred_loss_scaled = pred_loss_weight * pred_loss
+                if self._train_kwargs.get('debug', False):
+                    with torch.autograd.detect_anomaly():
+                        pred_loss_scaled.backward()
                 else:
-                    stats_loss = None
-                    loss = pred_loss
+                    pred_loss_scaled.backward()
 
-            if self._train_kwargs.get('debug', False):
-                with torch.autograd.detect_anomaly():
-                    if self.use_amp:
-                        current_scaler.scale(loss).backward()
-                    else:
-                        loss.backward()
-            else:
+            # ----------------------
+            # Forward/Backward pass 2: statistics loss (optional)
+            # ----------------------
+            stats_loss = None
+            if enable_stats_loss:
                 if self.use_amp:
-                    current_scaler.scale(loss).backward()
+                    with autocast():
+                        # run stats forward independently
+                        _x_norm, stats_pred = self.statistics_pred.normalize(x)
+                        stats_loss_raw, _ = self.stats_loss(stats_pred, y[:, -self.pred_len:, :])
+                        stats_loss_scaled = stats_loss_weight * stats_loss_raw
+                    if self._train_kwargs.get('debug', False):
+                        with torch.autograd.detect_anomaly():
+                            current_scaler.scale(stats_loss_scaled).backward()
+                    else:
+                        current_scaler.scale(stats_loss_scaled).backward()
+                    stats_loss = stats_loss_raw
                 else:
-                    loss.backward()
+                    _x_norm, stats_pred = self.statistics_pred.normalize(x)
+                    stats_loss_raw, _ = self.stats_loss(stats_pred, y[:, -self.pred_len:, :])
+                    stats_loss_scaled = stats_loss_weight * stats_loss_raw
+                    if self._train_kwargs.get('debug', False):
+                        with torch.autograd.detect_anomaly():
+                            stats_loss_scaled.backward()
+                    else:
+                        stats_loss_scaled.backward()
+                    stats_loss = stats_loss_raw
 
             # add max grad clipping
             if self._train_kwargs.get('clip_grad', False):
                 if self.use_amp:
+                    # unscale after all backward calls before clipping
                     current_scaler.unscale_(self.optimizer)
                 torch.nn.utils.clip_grad_norm_(self.model.parameters(), self._train_kwargs['max_grad_norm'])
 
@@ -406,11 +418,20 @@ class WDANSupervisor(BaseMTSSupervisor):
             else:
                 self.optimizer.step()
 
-            loss_item = loss.item()
-            total_loss += loss_item
-            total_pred_loss += pred_loss.item()
-            if stats_loss is not None:
+            # For logging, compose a virtual total loss = w1*loss1 + w2*loss2 (if any)
+            composed_loss = pred_loss_scaled.detach()
+            if enable_stats_loss and stats_loss is not None:
+                # stats_loss_scaled was computed above
+                if self.use_amp:
+                    # When using AMP, pred_loss_scaled/stats_loss_scaled are tensors; detach for logging
+                    loss_item = (pred_loss_scaled + stats_loss_scaled).item()
+                else:
+                    loss_item = (pred_loss_scaled + stats_loss_scaled).item()
                 total_stats_loss += stats_loss.item()
+            else:
+                loss_item = composed_loss.item()
+            total_pred_loss += pred_loss.item()
+            total_loss += loss_item
 
             # log information
             if batch_idx % self._train_kwargs['log_step'] == 0:
