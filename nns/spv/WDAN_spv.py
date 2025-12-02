@@ -418,41 +418,35 @@ class WDANSupervisor(BaseMTSSupervisor):
             else:
                 self.optimizer.step()
 
-            # For logging, compose a virtual total loss = w1*loss1 + w2*loss2 (if any)
-            composed_loss = pred_loss_scaled.detach()
+            # Accumulate running averages for separate losses
             if enable_stats_loss and stats_loss is not None:
-                # stats_loss_scaled was computed above
-                if self.use_amp:
-                    # When using AMP, pred_loss_scaled/stats_loss_scaled are tensors; detach for logging
-                    loss_item = (pred_loss_scaled + stats_loss_scaled).item()
-                else:
-                    loss_item = (pred_loss_scaled + stats_loss_scaled).item()
                 total_stats_loss += stats_loss.item()
-            else:
-                loss_item = composed_loss.item()
             total_pred_loss += pred_loss.item()
-            total_loss += loss_item
+            # keep a composed loss only for potential internal monitoring (not used for logs)
+            if enable_stats_loss and stats_loss is not None:
+                total_loss += (pred_loss_weight * pred_loss.item() + stats_loss_weight * stats_loss.item())
+            else:
+                total_loss += pred_loss.item()
 
             # log information
             if batch_idx % self._train_kwargs['log_step'] == 0:
                 if enable_stats_loss and stats_loss is not None:
                     self.logger.info(
-                        f'Train Epoch {epoch}: {batch_idx}/{self.train_per_epoch} Loss: {loss_item:.3f} '
-                        f'(fc {pred_loss_weight:.3f}*{pred_loss.item():.3f} + stats {stats_loss_weight:.3f}*{stats_loss.item():.3f})')
+                        f'Train Epoch {epoch}: {batch_idx}/{self.train_per_epoch} GradAcc -> '
+                        f'L1={pred_loss.item():.3f}, L2={stats_loss.item():.3f}; step=1')
                 else:
                     self.logger.info(
-                        f'Train Epoch {epoch}: {batch_idx}/{self.train_per_epoch} Loss: {loss_item:.3f}')
+                        f'Train Epoch {epoch}: {batch_idx}/{self.train_per_epoch} L1={pred_loss.item():.3f}; step=1')
 
-        train_epoch_loss = total_loss / self.train_per_epoch
+        # Epoch summaries: report separate averages; use L1 average as train_epoch_loss
+        avg_pred_loss = total_pred_loss / self.train_per_epoch
         if enable_stats_loss:
-            avg_pred_loss = total_pred_loss / self.train_per_epoch
             avg_stats_loss = total_stats_loss / self.train_per_epoch
             self.logger.info(
-                f'>>>>>>>>Train Epoch {epoch}: averaged loss {train_epoch_loss:.3f} '
-                f'(fc {pred_loss_weight:.3f}*{avg_pred_loss:.3f} + stats {stats_loss_weight:.3f}*{avg_stats_loss:.3f})')
+                f'>>>>>>>>Train Epoch {epoch}: L1_avg {avg_pred_loss:.3f}, L2_avg {avg_stats_loss:.3f}; step=1')
         else:
-            self.logger.info(f'>>>>>>>>Train Epoch {epoch}: averaged loss {train_epoch_loss:.3f}')
-        return train_epoch_loss
+            self.logger.info(f'>>>>>>>>Train Epoch {epoch}: L1_avg {avg_pred_loss:.3f}; step=1')
+        return avg_pred_loss
 
     def val_epoch(self, epoch):
         self.model.eval()
